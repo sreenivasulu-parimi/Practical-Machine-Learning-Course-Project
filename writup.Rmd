@@ -1,0 +1,226 @@
+---
+title: "Coursera: Practical Machine Learning - Course Project"
+author: "Sreenivasulu Parimi"
+date: "June 22, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Creating a prediction model
+
+## Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement, a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+The goal of this project is to build a machine learning algorithm to predict activity quality (classe) from activity monitors.
+
+#### Course Project Prediction Quiz Portion
+
+Apply your machine learning algorithm to the 20 test cases available in the test data above and submit your predictions in appropriate format to the Course Project Prediction Quiz for automated grading.
+
+## Load Required Libraries
+
+```{r}
+library(caret)
+library(ggplot2)
+```
+
+## Download the Data
+
+```{r}
+train_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+validation_url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+# Download the data into current working directory:
+train_file <- "./data/pml-training.csv"
+validation_file  <- "./data/pml-testing.csv"
+
+if(!file.exists("./data")) {
+      dir.create("./data")
+}
+
+if(!file.exists(train_file)) {
+      download.file(train_url, destfile=train_file, method="curl")
+}
+
+if(!file.exists(validation_file)) {
+      download.file(validation_url, destfile=validation_file, method="curl")
+}
+```
+
+## Read the Data
+
+```{r}
+train <- read.csv("./data/pml-training.csv")
+validation <- read.csv("./data/pml-testing.csv")
+```
+
+## Data Exploration and Preprocessing
+
+```{r}
+dim(train)
+dim(validation)
+str(train)
+```
+
+The training data has 19622 observations and 160 variables whereas has 20 observations and 160 variables.
+
+From the above, we can observe that first few (7) variables called **x** contains row numbers; **user_name** contains user name who did the test; **raw_timestamp_part_1**, **raw_timestamp_part_2**, and **cvtd_timestamp** are contain timestamps; **new_window** and **num_window** are not related to sensor data. So, we can ignore these variables since they don't add any value to the prediction outcome.
+
+```{r}
+train_NAs <- colMeans(is.na(train))
+table(train_NAs)
+validation_NAs <- colMeans(is.na(validation))
+table(validation_NAs)
+```
+
+From the above, we can notice that there are 67 variables in which almost all values (97.93%) are missing. Therefore, we can remove these variable as well since they don't add any additionval value to the outcome class.
+
+### Feature selection
+
+Now we can tranform the data to only include the variables we will need to build our model. We will remove variables with near zero variance, variables with mostly missing data, and variables that are obviously not useful as predictors.
+
+**Remove the first 7 variables**:
+
+```{r}
+# remove variables that don't make intuitive sense for prediction
+train_tidy <- train[,-c(1:7)]
+validation_tidy <- validation[,-c(1:7)]
+dim(train_tidy)
+dim(validation_tidy)
+```
+
+**Remove the NearZeroVariance variables**:
+
+```{r}
+# remove variables with nearly zero variance
+nzv <- nearZeroVar(train_tidy, saveMetrics=TRUE)
+train_tidy <- train_tidy[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(validation_tidy,saveMetrics=TRUE)
+validation_tidy <- validation_tidy[,nzv$nzv==FALSE]
+
+dim(train_tidy)
+dim(validation_tidy)
+```
+
+**Remove the variables those are all most NAs**:
+
+```{r}
+# remove variables that are almost NA
+# Here we get the indexes of the columns having at least 90% of NA or blank values on the training dataset
+train_NAs <- sapply(train_tidy, function(x) mean(is.na(x))) > 0.95
+validation_NAs <- sapply(validation_tidy, function(x) mean(is.na(x))) > 0.95
+train_tidy <- train_tidy[, train_NAs==FALSE]
+validation_tidy  <- validation_tidy[, validation_NAs==FALSE]
+validation_tidy  <- validation_tidy[, -length(validation_tidy)] #Remove problem_id
+
+dim(train_tidy)
+dim(validation_tidy)
+```
+
+## Build Model
+
+In order to pick best fit model on the given data, we perform 3 different models **Classification Tree**, **Random Forest** and **gradient boosting** in the following sections.
+
+#### Split the Data to training and testing
+
+Partioning the cleaned training set into train and test.
+
+```{r}
+set.seed(45)
+inTrain <- createDataPartition(train_tidy$classe, p=0.70, list=FALSE)
+train_data <- train_tidy[inTrain,]
+test_data <- train_tidy[-inTrain,]
+dim(train_data)
+dim(test_data)
+```
+
+#### Cross Validation
+
+Cross validation method can be used to limit the effects of overfitting and improve the efficiency of the models. Useally, this method uses 5 or 10 folds. But, 10 folds take more run time with no significant increase of the accuracy. So, we can use 5 fold.
+
+```{r}
+# instruct train to use 5-fold CV to select optimal tuning parameters
+fitControl <- trainControl(method="cv", number=5)
+```
+
+### Classification Tree (Decision Trees)
+
+```{r}
+# Classification Tree Fit
+fit_cf<- train(classe ~ ., data=train_data, method="rpart", trControl=fitControl)
+
+# use model to predict classe in test_data
+cf_pred <- predict(fit_cf, newdata=test_data)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(test_data$classe, cf_pred)
+plot(fit_cf)
+```
+
+### Random Forests
+
+```{r}
+# Random Forest Model Fit
+fit_rf<- train(classe ~ ., data=train_data, method="rf", trControl=fitControl)
+
+# use model to predict classe in in test_data
+rf_pred <- predict(fit_rf, newdata=test_data)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(test_data$classe, rf_pred)
+plot(fit_rf,main="Accuracy of Random forest model by number of predictors")
+plot(fit_rf$finalModel,main="Model error of Random forest model by number of trees")
+# variable importance
+varImp(fit_rf)
+```
+
+### Gradient Boosting
+
+```{r}
+# Gradient Boosting Model Fit
+fit_gb <- train(classe ~ ., data=train_data, method="gbm", trControl=fitControl, verbose=FALSE)
+
+# use model to predict classe in in test_data
+gb_pred <- predict(fit_gb, newdata=test_data)
+
+# show confusion matrix to get estimate of out-of-sample error
+confusionMatrix(test_data$classe, gb_pred)
+plot(fit_gb)
+```
+
+### Best Model
+
+From the above 3 models, we can notice that Random Forest gives best accuracy 99.24%.
+Acutally, the **train_data** contains only 70% of original training data. In order to produce the most accurate predictions, we can train the best model i.e random forest on the full training data **train_tidy data**.
+
+```{r}
+# Random Forest Model Fit on full training data
+fit_best <- train(classe ~ ., data=train_tidy, method="rf", trControl=fitControl)
+```
+
+## Submission
+
+Now we can use the best fitted model **fit_best** to prict the **classe** on the given actual test data.
+
+```{r}
+validation_pred <- predict(fit_best, newdata=validation_tidy)
+```
+
+The following function generates a file with predictions to submit as answers for the assignment.
+
+```{r}
+pml_write_files = function(x) {
+      n = length(x)
+      for(i in 1:n) {
+            filename = paste0("problem_id_",i,".txt")
+            write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+      }
+}
+pml_write_files(validation_pred)
+validation_pred
+```
